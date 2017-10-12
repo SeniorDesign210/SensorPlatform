@@ -15,58 +15,65 @@ byte shift_reg = 0;
 int THRESHOLD = (sensorMin + sensorMax)/2; //this is our MINIMUM resistance for a breath
 //note that resistance drops when the sensor is flexed
 
-unsigned long previousTime = 30000;
-byte seconds = 0;
+unsigned long previousTime = 0;
+int seconds = 0;
 
 int state=0;
-const unsigned int NUMBER_OF_MODES = 2;
-__attribute__((section(".noinit"))) unsigned int mode;
+//const unsigned int NUMBER_OF_MODES = 2;
+unsigned int mode=0;
 
 
 
 void setup() {
   // declare the ledPin as an OUTPUT:
-  if(++mode >= NUMBER_OF_MODES) mode=0;
+//  if(++mode >= NUMBER_OF_MODES) mode=0;
   pinMode(ledPin, OUTPUT);
   pinMode(onboardLED, OUTPUT);
   // initialize serial communications at 9600 bps:
   Serial.begin(9600);
-  Serial.print("Current mode: ");
-  Serial.println(mode);
+//  Serial.print("Current mode: ");
+//  Serial.println(mode);
 }
 
 void loop() {
+  if(millis()>=(previousTime)){
+    previousTime = previousTime+1000;
+    seconds++;
+
+//    Serial.println("This many seconds: ");
+    Serial.print("t=");
+    Serial.println(seconds);
+  }
+  THRESHOLD = (sensorMin + sensorMax)/2;
   if(mode==0){
     digitalWrite(ledPin, HIGH); // turn on LED to signal the start of the calibration period
   
-    // calibrate during the first 30 seconds
-    while (millis() < 30000) {
-    sensorValue = analogRead(sensorPin);
-
-    // record the maximum sensor value
-    if (sensorValue > sensorMax) {
-      sensorMax = sensorValue;
-    }
-
-    // record the minimum sensor value
-    if (sensorValue < sensorMin) {
-      sensorMin = sensorValue;
+    // calibrate for 10 seconds
+    if(seconds<10){
+      sensorValue = analogRead(sensorPin);
+      if(sensorValue > sensorMax){
+        sensorMax = sensorValue;
+      }
+      if(sensorValue<sensorMin){
+        sensorMin = sensorValue;
+      }
+//      Serial.println(sensorValue);
+    } else {
+      mode=1;
+      seconds = 0;
     }
   }
-
-  // signal the end of the calibration period
-  digitalWrite(ledPin, LOW);
-  THRESHOLD = (sensorMin + sensorMax)/2;
-
+  else if(mode==1){
+    // signal the end of the calibration period
+    digitalWrite(ledPin, LOW);
+  
     // start recording breaths for 10 seconds
-    if(millis()>=(previousTime)){
-      previousTime = previousTime+1000;
-      seconds++;
-    }
-    if(seconds==11){
+    if(seconds==30){
       Serial.print("Resp. Rate: ");
-      Serial.println(breaths*6);
-      mode=1;
+      Serial.println(breaths*2);
+      breaths = 0;
+      seconds = 0;
+      mode=0;
     }
     // read the value from the sensor:
     sensorValue = analogRead(sensorPin);
@@ -75,22 +82,11 @@ void loop() {
     if((sensorValue<=THRESHOLD) && (shift_reg==0)){
       shift_reg=1;
       breaths++;
+      Serial.print("Breath");
     }
     else if((sensorValue>THRESHOLD) && (shift_reg==1)){
       shift_reg=0;
     }
-    // divide it into a value from 0-255
-    fadeValue = sensorValue/scaleValue;
-    //write these values to Serial Window
-    Serial.println(fadeValue);
-    //write to LED 
-    analogWrite(ledPin, fadeValue);
-    digitalWrite(onboardLED,0);
-    delay(5);
-    
   }
-  else {
-    analogWrite(ledPin, 0);
-    digitalWrite(onboardLED,1);
-  }               
+  delay(5); 
 }
