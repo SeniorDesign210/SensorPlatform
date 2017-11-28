@@ -1,3 +1,6 @@
+#include <XBee.h>
+#include <Printers.h>
+
 #include <Comm.h>
 
 /*****************************************************************
@@ -15,7 +18,7 @@
 // named anything, we'll refer to that throught the sketch.
 LSM9DS1 imu;
 
-Comm xbee = Comm(2,3);
+//Comm xbee = Comm(2,3);
 
 ///////////////////////
 // Example I2C Setup //
@@ -29,8 +32,10 @@ Comm xbee = Comm(2,3);
 ////////////////////////////
 #define PRINT_CALCULATED
 //#define PRINT_RAW
-#define PRINT_SPEED 100 // 250 ms between prints
+#define PRINT_SPEED 1 // 250 ms between prints
+#define HR_SAMPLE_TIME 15000// 15 s
 static unsigned long lastPrint = 0; // Keep track of print time
+static unsigned long lastRead_HR = 0; //keep track of HR sample time
 
 // Earth's magnetic field varies by location. Add or subtract 
 // a declination to get a more accurate heading. Calculate 
@@ -39,11 +44,17 @@ static unsigned long lastPrint = 0; // Keep track of print time
 #define DECLINATION -11.45 // Declination (degrees) in Newark, DE
 
 int mode;
+bool lock;
+int beats;
+XBee xbee = XBee();
 
 void setup() 
 {
   
 //  Serial.begin(115200);
+  Serial.begin(9600);
+  xbee.setSerial(Serial);
+
   
   // Before initializing the IMU, there are a few settings
   // we may need to adjust. Use the settings struct to set
@@ -51,7 +62,10 @@ void setup()
   imu.settings.device.commInterface = IMU_MODE_I2C;
   imu.settings.device.mAddress = LSM9DS1_M;
   imu.settings.device.agAddress = LSM9DS1_AG;
+  
   mode = 0;
+  lock = 0;
+  beats = 0;
   // The above lines will only take effect AFTER calling
   // imu.begin(), which verifies communication with the IMU
   // and turns it on.
@@ -64,17 +78,36 @@ void setup()
                   "Breakout, but may need to be modified " \
                   "if the board jumpers are.");
     
-    while (1){
-      xbee.sendERR(1);
-    }
+//    while (1){
+//      xbee.sendERR(1);
+//    }
   }
+  Serial.println("IMU is setup");
   pinMode(10, INPUT);
 }
 
 
-
 void loop()
 {
+  bool hr_in = digitalRead(10);
+  if(hr_in==0 and lock==0){
+//    Serial.println("beat");
+    beats+=1.0;
+    lock=1;
+  }
+  else if(hr_in==1 and lock==1){
+    lock=0;
+  }
+  //currently doing the sampling on here
+  if((lastRead_HR + HR_SAMPLE_TIME) < millis()){ // enough beat samples, multiply and send
+    float BPM = beats*(60/(HR_SAMPLE_TIME/1000));
+//    Serial.print("HR:");
+//    Serial.print(beats*(60/(HR_SAMPLE_TIME/1000)));
+//    Serial.print("\n");
+//    xbee.sendHR(beats*(60/(HR_SAMPLE_TIME/1000)) ); // 60s / (HR_SAMPLE_TIME s/sample) = samples multiplier
+    beats = 0;
+    lastRead_HR = millis();
+  }
   // Update the sensor values whenever new data is available
   if ( imu.gyroAvailable() )
   {
@@ -97,21 +130,109 @@ void loop()
     // mx, my, and mz variables with the most current data.
     imu.readMag();
   }
+  xbee.readPacket();
+  if (xbee.getResponse().isAvailable()) {
+    if (xbee.getResponse().getApiId() == "TX_TRANSMIT_STATUS") {
+      xbee.getResponse();
+    }
+  }
   
   if ((lastPrint + PRINT_SPEED) < millis())
   {
-//    printGyro();
-//    printAccel();
-//    printMag();
+    printGyro();
+    printAccel();
+    printMag();
     if(mode==0) { //send heart rate
 //      xbee.sendHR(46.0);
       mode++; //increment mode
     }
-    else if(mode==1){ //send IMU
+    else if(mode==1){ //send IMU data, using mode to switch between the different data points
+        //this looks like a lot, but it really isn't. Find documentation on github about this.
+        //https://github.com/SeniorDesign210/SensorPlatform/wiki/Communications-System
+        uint8_t payload[37];
+        float gx = imu.calcGyro(imu.gx);
+        float gy = imu.calcGyro(imu.gy);
+        float gz = imu.calcGyro(imu.gz);
+        byte *b_gx = (byte *)&gx;
+        byte *b_gy = (byte *)&gy;
+        byte *b_gz = (byte *)&gz;
+        float ax = imu.calcAccel(imu.ax);
+        float ay = imu.calcAccel(imu.ay);
+        float az = imu.calcAccel(imu.az);
+        byte *b_ax = (byte *)&ax;
+        byte *b_ay = (byte *)&ay;
+        byte *b_az = (byte *)&az;
+        float mx = imu.calcMag(imu.mx);
+        float my = imu.calcMag(imu.my);
+        float mz = imu.calcMag(imu.mz);
+        byte *b_mx = (byte *)&mx;
+        byte *b_my = (byte *)&my;
+        byte *b_mz = (byte *)&mz;
+        payload[0] = 'I';
+        payload[1] = b_gx[0];
+        payload[2] = b_gx[1];
+        payload[3] = b_gx[2];
+        payload[4] = b_gx[3];
+        payload[5] = b_gy[0];
+        payload[6] = b_gy[1];
+        payload[7] = b_gy[2];
+        payload[8] = b_gy[3];
+        payload[9] = b_gz[0];
+        payload[10] = b_gz[1];
+        payload[11] = b_gz[2];
+        payload[12] = b_gz[3];
 
-      xbee.sendIMU(imu.calcGyro(imu.gx),imu.calcGyro(imu.gy),imu.calcGyro(imu.gz),
-                   imu.calcAccel(imu.ax),imu.calcAccel(imu.ay),imu.calcAccel(imu.az),
-                   imu.calcMag(imu.mx),imu.calcMag(imu.my),imu.calcMag(imu.mz));
+        payload[13] = b_ax[0];
+        payload[14] = b_ax[1];
+        payload[15] = b_ax[2];
+        payload[16] = b_ax[3];
+        payload[17] = b_ay[0];
+        payload[18] = b_ay[1];
+        payload[19] = b_ay[2];
+        payload[20] = b_ay[3];
+        payload[21] = b_az[0];
+        payload[22] = b_az[1];
+        payload[23] = b_az[2];
+        payload[24] = b_az[3];
+
+        payload[25] = b_mx[0];
+        payload[26] = b_mx[1];
+        payload[27] = b_mx[2];
+        payload[28] = b_mx[3];
+        payload[29] = b_my[0];
+        payload[30] = b_my[1];
+        payload[31] = b_my[2];
+        payload[32] = b_my[3];
+        payload[33] = b_mz[0];
+        payload[34] = b_mz[1];
+        payload[35] = b_mz[2];
+        payload[36] = b_mz[3];
+        
+        Tx16Request tx = Tx16Request(0x0000, payload, sizeof(payload));
+
+        xbee.send(tx);
+        
+
+
+//        Serial.write(b_gx, 4);
+//        Serial.write(b_gy, 4);
+//        Serial.write(b_gz, 4);
+
+
+//        Serial.print(gx,2);
+//        Serial.print(',');
+//        Serial.print(gy,2);
+//        Serial.print(',');
+//        Serial.print(gz,2);
+//        Serial.print('\n');
+
+        
+//        Serial.print(imu.calcGyro(imu.gx), 2);
+//        Serial.print(',');
+//        Serial.print(imu.calcGyro(imu.gy), 2);
+//        Serial.print(',');
+//        Serial.print(imu.calcGyro(imu.gz), 2);
+//        Serial.print('\n');
 //      mode=0; //reset mode
     }
     
