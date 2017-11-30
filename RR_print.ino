@@ -24,4 +24,6 @@ void setup() {
 void loop() {
     sensorValue = analogRead(sensorPin);
     Serial.println(sensorValue);
+    //Allow time to process serial communication
+    delay(5);
 }
